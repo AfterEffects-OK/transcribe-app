@@ -11,13 +11,50 @@ import { GoogleGenAI } from '@google/genai';
 const execFileAsync = promisify(execFile);
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const envFilePath = path.join(process.cwd(), '.env');
 
-if (!process.env.GEMINI_API_KEY) {
-  console.error('環境変数 GEMINI_API_KEY が設定されていません。');
-  process.exit(1);
+// 実行中に更新可能なAPIキー保持変数
+let currentApiKey = (process.env.GEMINI_API_KEY || '').trim();
+
+function getAiClient() {
+  if (!currentApiKey) {
+    throw new Error('Gemini API キーが未設定です。画面右上の「API設定」から登録してください。');
+  }
+  return new GoogleGenAI({ apiKey: currentApiKey });
 }
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// .env ファイルの GEMINI_API_KEY を安全に更新・作成する
+function saveApiKeyToEnv(newKey) {
+  const sanitizedKey = newKey.replace(/[\r\n]/g, '').trim();
+  let lines = [];
+
+  if (fs.existsSync(envFilePath)) {
+    const raw = fs.readFileSync(envFilePath, 'utf8');
+    lines = raw.split(/\r?\n/);
+  }
+
+  let updated = false;
+  lines = lines.map((line) => {
+    if (/^\s*GEMINI_API_KEY\s*=/.test(line)) {
+      updated = true;
+      return `GEMINI_API_KEY=${sanitizedKey}`;
+    }
+    return line;
+  });
+
+  if (!updated) {
+    lines.push(`GEMINI_API_KEY=${sanitizedKey}`);
+  }
+
+  if (!lines.some((line) => /^\s*PORT\s*=/.test(line))) {
+    lines.push(`PORT=${port}`);
+  }
+
+  const content = lines.filter((l, idx, arr) => !(idx === arr.length - 1 && l === '')).join('\n') + '\n';
+  fs.writeFileSync(envFilePath, content, 'utf8');
+  currentApiKey = sanitizedKey;
+  process.env.GEMINI_API_KEY = sanitizedKey;
+}
 
 const uploadDir = path.join(os.tmpdir(), 'gemini-transcribe-uploads');
 fs.mkdirSync(uploadDir, { recursive: true });
@@ -25,11 +62,11 @@ fs.mkdirSync(uploadDir, { recursive: true });
 const upload = multer({
   dest: uploadDir,
   limits: {
-    // 2時間超の動画/音声も扱えるよう上限を大きめに設定（必要に応じて調整）
     fileSize: 4 * 1024 * 1024 * 1024,
   },
 });
 
+app.use(express.json());
 app.use(express.static(path.join(process.cwd(), 'public')));
 
 // ffmpeg が利用可能か確認
@@ -42,7 +79,47 @@ async function hasFfmpeg() {
   }
 }
 
-// 音声/動画を30分（1800秒）単位のMP3チャンクに分割（ffmpeg利用時）
+// 設定状態の取得API
+app.get('/api/status', async (_req, res) => {
+  const ffmpegAvailable = await hasFfmpeg();
+  const maskedKey = currentApiKey
+    ? `${currentApiKey.slice(0, 6)}...${currentApiKey.slice(-4)}`
+    : '';
+  res.json({
+    configured: Boolean(currentApiKey),
+    maskedKey,
+    ffmpegAvailable,
+  });
+});
+
+// APIキーの接続テスト＆.env保存API
+app.post('/api/settings', async (req, res) => {
+  const apiKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  if (!apiKey) {
+    return res.status(400).json({ error: 'APIキーを入力してください。' });
+  }
+
+  try {
+    // 入力されたキーで接続テスト（軽量なモデル情報取得）
+    const testClient = new GoogleGenAI({ apiKey });
+    await testClient.models.get({ model: 'gemini-2.5-flash' });
+
+    saveApiKeyToEnv(apiKey);
+    const maskedKey = `${apiKey.slice(0, 6)}...${apiKey.slice(-4)}`;
+    return res.json({
+      ok: true,
+      maskedKey,
+      message: '接続テストに成功し、.env に保存しました。',
+    });
+  } catch (error) {
+    console.error('API key verification failed:', error);
+    return res.status(400).json({
+      error: 'APIキーの検証に失敗しました。キーが正しいか、有効になっているか確認してください。',
+    });
+  }
+});
+
+// 音声/動画を30分（1800秒）単位のMP3チャンクに分割
 async function splitMediaIntoChunks(inputPath, chunkSeconds = 1800) {
   const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'chunks-'));
   const outputPattern = path.join(workDir, 'part_%03d.mp3');
@@ -76,7 +153,7 @@ async function splitMediaIntoChunks(inputPath, chunkSeconds = 1800) {
 }
 
 // Files API アップロード後に ACTIVE 状態になるまで待機
-async function uploadAndWaitActive(filePath, mimeType) {
+async function uploadAndWaitActive(ai, filePath, mimeType) {
   const uploaded = await ai.files.upload({
     file: filePath,
     mimeType,
@@ -118,8 +195,8 @@ function buildPrompt({ glossary, partIndex, totalParts, chunkSeconds }) {
 - 聞き取れない箇所は [聞き取り不明] と明記し、推測で捏造しないでください。${glossaryBlock}`;
 }
 
-async function transcribeSingleFile(filePath, mimeType, promptText) {
-  const uploaded = await uploadAndWaitActive(filePath, mimeType);
+async function transcribeSingleFile(ai, filePath, mimeType, promptText) {
+  const uploaded = await uploadAndWaitActive(ai, filePath, mimeType);
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-2.5-flash',
@@ -158,6 +235,7 @@ app.post('/api/transcribe', upload.single('media'), async (req, res) => {
   let chunkWorkDir = null;
 
   try {
+    const ai = getAiClient();
     const ffmpegAvailable = useChunking ? await hasFfmpeg() : false;
 
     if (useChunking && ffmpegAvailable) {
@@ -173,7 +251,7 @@ app.post('/api/transcribe', upload.single('media'), async (req, res) => {
             totalParts: chunkPaths.length,
             chunkSeconds,
           });
-          const text = await transcribeSingleFile(chunkPaths[i], 'audio/mp3', prompt);
+          const text = await transcribeSingleFile(ai, chunkPaths[i], 'audio/mp3', prompt);
           partsText.push(`=== パート ${i + 1} / ${chunkPaths.length} ===\n\n${text.trim()}`);
         }
         return res.json({
@@ -183,14 +261,13 @@ app.post('/api/transcribe', upload.single('media'), async (req, res) => {
       }
     }
 
-    // 分割なし（または ffmpeg 未導入時）の一括処理
     const prompt = buildPrompt({
       glossary,
       partIndex: 1,
       totalParts: 1,
       chunkSeconds,
     });
-    const transcript = await transcribeSingleFile(inputPath, originalMime, prompt);
+    const transcript = await transcribeSingleFile(ai, inputPath, originalMime, prompt);
 
     return res.json({
       transcript,
@@ -208,4 +285,7 @@ app.post('/api/transcribe', upload.single('media'), async (req, res) => {
 
 app.listen(port, '127.0.0.1', () => {
   console.log(`文字起こしアプリ起動中: http://127.0.0.1:${port}`);
+  if (!currentApiKey) {
+    console.log('※ Gemini API キーが未設定です。ブラウザ画面のセットアップから登録してください。');
+  }
 });
