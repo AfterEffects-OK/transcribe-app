@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ローカル文字起こし（Gemini API）</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111318;
+      --panel: #1a1e26;
+      --border: #2c3340;
+      --text: #eef2f7;
+      --muted: #9aa5b4;
+      --accent: #4f8cff;
+      --ok: #2ea043;
+      --err: #f85149;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 900px;
+      margin: 32px auto;
+      padding: 0 16px;
+    }
+    h1 { font-size: 1.4rem; margin: 0 0 6px; }
+    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 18px;
+      margin-bottom: 16px;
+    }
+    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.95rem; }
+    input[type="file"], textarea {
+      width: 100%;
+      background: #12151b;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 0.95rem;
+    }
+    textarea { min-height: 84px; resize: vertical; }
+    .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 14px;
+      flex-wrap: wrap;
+    }
+    .check {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 400;
+      font-size: 0.9rem;
+      color: var(--muted);
+      cursor: pointer;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: #252b36;
+      border: 1px solid var(--border);
+    }
+    .status-box {
+      display: none;
+      padding: 14px;
+      border-radius: 8px;
+      background: #12151b;
+      border: 1px solid var(--border);
+      margin-top: 14px;
+    }
+    .status-box.active { display: block; }
+    .progress-wrap {
+      width: 100%;
+      height: 8px;
+      background: #252b36;
+      border-radius: 999px;
+      overflow: hidden;
+      margin-top: 8px;
+    }
+    .progress-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.2s ease;
+    }
+    .progress-bar.indeterminate {
+      width: 45%;
+      animation: slide 1.4s infinite ease-in-out;
+    }
+    @keyframes slide {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(240%); }
+    }
+    .error { color: var(--err); font-weight: 600; }
+    .ok { color: var(--ok); font-weight: 600; }
+    #resultText {
+      min-height: 280px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+    }
+    .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>ローカル文字起こしアプリ</h1>
+    <p class="sub">127.0.0.1 限定起動・Gemini API 連携（長時間講義・会議向け）</p>
+
+    <form id="transcribeForm" class="card">
+      <div>
+        <label for="mediaFile">音声または動画ファイルを選択</label>
+        <input id="mediaFile" name="media" type="file" accept="audio/*,video/*" required />
+      </div>
+
+      <div style="margin-top: 14px;">
+        <label for="glossary">専門用語・固有名詞・話者メモ（任意・精度向上に効果的）</label>
+        <textarea id="glossary" name="glossary" placeholder="例：After Effects、コンポジション、議長＝田中、参加者＝佐藤・鈴木"></textarea>
+      </div>
+
+      <div class="row">
+        <label class="check">
+          <input type="checkbox" id="useChunking" name="useChunking" checked />
+          30分単位で自動分割処理する（長時間動画の完走率向上・要 ffmpeg）
+        </label>
+        <button type="submit" id="submitBtn">文字起こし開始</button>
+      </div>
+
+      <div id="statusBox" class="status-box">
+        <div id="statusLabel">待機中...</div>
+        <div class="progress-wrap">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+      </div>
+    </form>
+
+    <div class="card">
+      <label for="resultText">文字起こし結果</label>
+      <textarea id="resultText" placeholder="ここに文字起こし結果が表示されます"></textarea>
+      <div class="actions">
+        <button type="button" id="copyBtn" class="secondary">テキストをコピー</button>
+        <button type="button" id="downloadBtn" class="secondary">.txt でダウンロード</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('transcribeForm');
+    const fileInput = document.getElementById('mediaFile');
+    const glossaryInput = document.getElementById('glossary');
+    const useChunkingInput = document.getElementById('useChunking');
+    const submitBtn = document.getElementById('submitBtn');
+    const statusBox = document.getElementById('statusBox');
+    const statusLabel = document.getElementById('statusLabel');
+    const progressBar = document.getElementById('progressBar');
+    const resultText = document.getElementById('resultText');
+    const copyBtn = document.getElementById('copyBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+
+    function setPhase(phase, text, percent = 0) {
+      statusBox.classList.add('active');
+      statusLabel.className = '';
+      progressBar.classList.remove('indeterminate');
+
+      if (phase === 'uploading') {
+        statusLabel.textContent = `アップロード中... ${percent}%`;
+        progressBar.style.width = `${percent}%`;
+      } else if (phase === 'transcribing') {
+        statusLabel.textContent = text || '文字起こし中...（長時間の場合は数分かかります）';
+        progressBar.classList.add('indeterminate');
+      } else if (phase === 'done') {
+        statusLabel.textContent = text || '完了しました';
+        statusLabel.className = 'ok';
+        progressBar.style.width = '100%';
+      } else if (phase === 'error') {
+        statusLabel.textContent = text || 'エラーが発生しました';
+        statusLabel.className = 'error';
+        progressBar.style.width = '100%';
+      }
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const file = fileInput.files?.[0];
+      if (!file) return;
+
+      const formData = new FormData();
+      formData.append('media', file);
+      formData.append('glossary', glossaryInput.value);
+      formData.append('useChunking', String(useChunkingInput.checked));
+
+      submitBtn.disabled = true;
+      resultText.value = '';
+      setPhase('uploading', '', 0);
+
+      const xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/transcribe');
+
+      xhr.upload.addEventListener('progress', (ev) => {
+        if (ev.lengthComputable) {
+          const pct = Math.min(99, Math.round((ev.loaded / ev.total) * 100));
+          setPhase('uploading', '', pct);
+        }
+      });
+
+      xhr.upload.addEventListener('load', () => {
+        setPhase('transcribing', '文字起こし中...（音声解析・テキスト生成を実行中）');
+      });
+
+      xhr.addEventListener('load', () => {
+        submitBtn.disabled = false;
+        try {
+          const data = JSON.parse(xhr.responseText || '{}');
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resultText.value = data.transcript || '';
+            setPhase('done', `完了しました（${data.mode || '処理済み'}）`);
+          } else {
+            setPhase('error', `エラー: ${data.error || '処理に失敗しました'}`);
+          }
+        } catch {
+          setPhase('error', 'サーバー応答の解析に失敗しました。');
+        }
+      });
+
+      xhr.addEventListener('error', () => {
+        submitBtn.disabled = false;
+        setPhase('error', '通信エラーが発生しました。');
+      });
+
+      xhr.send(formData);
+    });
+
+    copyBtn.addEventListener('click', async () => {
+      if (!resultText.value) return;
+      await navigator.clipboard.writeText(resultText.value);
+      copyBtn.textContent = 'コピー済み';
+      setTimeout(() => (copyBtn.textContent = 'テキストをコピー'), 1500);
+    });
+
+    downloadBtn.addEventListener('click', () => {
+      if (!resultText.value) return;
+      const blob = new Blob([resultText.value], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `transcript_${Date.now()}.txt`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  </script>
+</body>
+</html>
