@@ -14,6 +14,7 @@
       --muted: #9aa5b4;
       --accent: #4f8cff;
       --ok: #2ea043;
+      --warn: #d29922;
       --err: #f85149;
     }
     * { box-sizing: border-box; }
@@ -22,39 +23,63 @@
       font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
       background: var(--bg);
       color: var(--text);
-      line-height: 1.6;
+      line-height: 1.5;
     }
     .container {
       max-width: 900px;
-      margin: 32px auto;
+      margin: 24px auto;
       padding: 0 16px;
     }
-    h1 { font-size: 1.4rem; margin: 0 0 6px; }
-    .sub { color: var(--muted); font-size: 0.9rem; margin-bottom: 20px; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      margin-bottom: 16px;
+      flex-wrap: wrap;
+    }
+    h1 { font-size: 1.35rem; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 0.88rem; margin: 0; }
+    .env-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .badge {
+      font-size: 0.8rem;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel);
+      color: var(--muted);
+    }
+    .badge.ok { border-color: var(--ok); color: #7ee787; }
+    .badge.warn { border-color: var(--warn); color: #e3b341; }
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 18px;
-      margin-bottom: 16px;
+      padding: 16px;
+      margin-bottom: 14px;
     }
-    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.95rem; }
-    input[type="file"], textarea {
+    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.92rem; }
+    input[type="file"], input[type="password"], input[type="text"], textarea {
       width: 100%;
       background: #12151b;
       color: var(--text);
       border: 1px solid var(--border);
       border-radius: 8px;
-      padding: 10px;
-      font-size: 0.95rem;
+      padding: 9px 11px;
+      font-size: 0.93rem;
     }
-    textarea { min-height: 84px; resize: vertical; }
+    textarea { min-height: 78px; resize: vertical; }
     .row {
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-top: 14px;
+      margin-top: 12px;
       flex-wrap: wrap;
     }
     .check {
@@ -62,7 +87,7 @@
       align-items: center;
       gap: 8px;
       font-weight: 400;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
       color: var(--muted);
       cursor: pointer;
     }
@@ -71,8 +96,8 @@
       color: #fff;
       border: none;
       border-radius: 8px;
-      padding: 10px 18px;
-      font-size: 0.95rem;
+      padding: 9px 16px;
+      font-size: 0.92rem;
       font-weight: 600;
       cursor: pointer;
     }
@@ -83,11 +108,11 @@
     }
     .status-box {
       display: none;
-      padding: 14px;
+      padding: 12px;
       border-radius: 8px;
       background: #12151b;
       border: 1px solid var(--border);
-      margin-top: 14px;
+      margin-top: 12px;
     }
     .status-box.active { display: block; }
     .progress-wrap {
@@ -113,19 +138,52 @@
       100% { transform: translateX(240%); }
     }
     .error { color: var(--err); font-weight: 600; }
-    .ok { color: var(--ok); font-weight: 600; }
+    .ok-text { color: #7ee787; font-weight: 600; }
     #resultText {
-      min-height: 280px;
+      min-height: 270px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.9rem;
+      font-size: 0.88rem;
     }
     .actions { display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap; }
+
+    /* セットアップモーダル */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.72);
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 100;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      width: 100%;
+      max-width: 480px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+    }
+    .modal h2 { margin: 0 0 8px; font-size: 1.15rem; }
+    .modal p { margin: 0 0 14px; font-size: 0.88rem; color: var(--muted); }
+    .modal-msg { margin-top: 10px; font-size: 0.86rem; min-height: 1.2em; }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>ローカル文字起こしアプリ</h1>
-    <p class="sub">127.0.0.1 限定起動・Gemini API 連携（長時間講義・会議向け）</p>
+    <div class="header">
+      <div>
+        <h1>ローカル文字起こしアプリ</h1>
+        <p class="sub">127.0.0.1 限定起動・Gemini API 連携（長時間講義・会議向け）</p>
+      </div>
+      <div class="env-bar">
+        <span id="apiBadge" class="badge warn">APIキー: 確認中...</span>
+        <span id="ffmpegBadge" class="badge">ffmpeg: 確認中...</span>
+        <button type="button" id="openSettingsBtn" class="secondary">API設定</button>
+      </div>
+    </div>
 
     <form id="transcribeForm" class="card">
       <div>
@@ -133,7 +191,7 @@
         <input id="mediaFile" name="media" type="file" accept="audio/*,video/*" required />
       </div>
 
-      <div style="margin-top: 14px;">
+      <div style="margin-top: 12px;">
         <label for="glossary">専門用語・固有名詞・話者メモ（任意・精度向上に効果的）</label>
         <textarea id="glossary" name="glossary" placeholder="例：After Effects、コンポジション、議長＝田中、参加者＝佐藤・鈴木"></textarea>
       </div>
@@ -164,6 +222,29 @@
     </div>
   </div>
 
+  <!-- APIキー設定モーダル -->
+  <div id="settingsModal" class="modal-backdrop">
+    <div class="modal">
+      <h2>Gemini API セットアップ</h2>
+      <p>
+        Google AI Studio で取得した Gemini API キーを入力してください。接続テスト後、ローカルの <code>.env</code> ファイルに自動保存されます。
+      </p>
+      <label for="apiKeyInput">Gemini API キー</label>
+      <input id="apiKeyInput" type="password" placeholder="AIzaSy..." autocomplete="off" />
+      <div class="row" style="margin-top: 10px;">
+        <label class="check">
+          <input type="checkbox" id="toggleKeyVis" />
+          キーを表示する
+        </label>
+        <div style="display: flex; gap: 8px;">
+          <button type="button" id="closeSettingsBtn" class="secondary">閉じる</button>
+          <button type="button" id="saveSettingsBtn">接続テストして保存</button>
+        </div>
+      </div>
+      <div id="modalMsg" class="modal-msg"></div>
+    </div>
+  </div>
+
   <script>
     const form = document.getElementById('transcribeForm');
     const fileInput = document.getElementById('mediaFile');
@@ -176,6 +257,100 @@
     const resultText = document.getElementById('resultText');
     const copyBtn = document.getElementById('copyBtn');
     const downloadBtn = document.getElementById('downloadBtn');
+
+    const apiBadge = document.getElementById('apiBadge');
+    const ffmpegBadge = document.getElementById('ffmpegBadge');
+    const settingsModal = document.getElementById('settingsModal');
+    const openSettingsBtn = document.getElementById('openSettingsBtn');
+    const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+    const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+    const apiKeyInput = document.getElementById('apiKeyInput');
+    const toggleKeyVis = document.getElementById('toggleKeyVis');
+    const modalMsg = document.getElementById('modalMsg');
+
+    async function refreshStatus(openIfUnconfigured = false) {
+      try {
+        const res = await fetch('/api/status');
+        const data = await res.json();
+
+        if (data.configured) {
+          apiBadge.textContent = `APIキー: 設定済み (${data.maskedKey})`;
+          apiBadge.className = 'badge ok';
+        } else {
+          apiBadge.textContent = 'APIキー: 未設定';
+          apiBadge.className = 'badge warn';
+          if (openIfUnconfigured) {
+            openModal();
+          }
+        }
+
+        if (data.ffmpegAvailable) {
+          ffmpegBadge.textContent = 'ffmpeg: 利用可能';
+          ffmpegBadge.className = 'badge ok';
+        } else {
+          ffmpegBadge.textContent = 'ffmpeg: 未検出（一括処理）';
+          ffmpegBadge.className = 'badge';
+        }
+      } catch {
+        apiBadge.textContent = 'APIキー: 状態取得エラー';
+        apiBadge.className = 'badge warn';
+      }
+    }
+
+    function openModal() {
+      modalMsg.textContent = '';
+      modalMsg.className = 'modal-msg';
+      settingsModal.classList.add('open');
+      apiKeyInput.focus();
+    }
+
+    function closeModal() {
+      settingsModal.classList.remove('open');
+    }
+
+    openSettingsBtn.addEventListener('click', openModal);
+    closeSettingsBtn.addEventListener('click', closeModal);
+    toggleKeyVis.addEventListener('change', () => {
+      apiKeyInput.type = toggleKeyVis.checked ? 'text' : 'password';
+    });
+
+    saveSettingsBtn.addEventListener('click', async () => {
+      const apiKey = apiKeyInput.value.trim();
+      if (!apiKey) {
+        modalMsg.textContent = 'APIキーを入力してください。';
+        modalMsg.className = 'modal-msg error';
+        return;
+      }
+
+      saveSettingsBtn.disabled = true;
+      modalMsg.textContent = 'Gemini API へ接続テスト中...';
+      modalMsg.className = 'modal-msg';
+
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ apiKey }),
+        });
+        const data = await res.json();
+
+        if (res.ok && data.ok) {
+          modalMsg.textContent = data.message;
+          modalMsg.className = 'modal-msg ok-text';
+          apiKeyInput.value = '';
+          await refreshStatus(false);
+          setTimeout(closeModal, 900);
+        } else {
+          modalMsg.textContent = data.error || '保存に失敗しました。';
+          modalMsg.className = 'modal-msg error';
+        }
+      } catch {
+        modalMsg.textContent = '通信エラーが発生しました。';
+        modalMsg.className = 'modal-msg error';
+      } finally {
+        saveSettingsBtn.disabled = false;
+      }
+    });
 
     function setPhase(phase, text, percent = 0) {
       statusBox.classList.add('active');
@@ -190,7 +365,7 @@
         progressBar.classList.add('indeterminate');
       } else if (phase === 'done') {
         statusLabel.textContent = text || '完了しました';
-        statusLabel.className = 'ok';
+        statusLabel.className = 'ok-text';
         progressBar.style.width = '100%';
       } else if (phase === 'error') {
         statusLabel.textContent = text || 'エラーが発生しました';
@@ -267,6 +442,8 @@
       a.click();
       URL.revokeObjectURL(url);
     });
+
+    refreshStatus(true);
   </script>
 </body>
 </html>
